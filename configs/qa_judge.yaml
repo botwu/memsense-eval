@@ -1,0 +1,59 @@
+# QA + Judge pipeline (data already ingested into memsense)
+#
+# Usage:
+#   cd memsense-eval
+#   .venv/bin/python -m memsense_eval configs/qa_judge.yaml
+
+resources:
+  - name: locomo_reader
+    config:
+      filter_category: "5"
+
+  - name: memsense_qa
+    config:
+      agent_id: "main"
+      concurrency: 1
+      retries: 2
+      timeout: 300
+
+  - name: response_filter
+
+  - name: llm_judge
+    config:
+      model: "deepseek-chat"
+      base_url: "https://api.deepseek.com"
+      api_key: "sk-bd624bd8e4be42a9bf1a873287c447cf"
+      concurrency: 5
+
+  - name: metrics_summary
+    config:
+      output_dir: "output"
+      task_name: "qa_judge"
+
+data:
+  benchmark:
+    data_path: "./data/locomo10_small.json"
+    user_prefix: "eval"
+
+flows:
+  - use: locomo_reader
+    by: [benchmark.data_path]
+    obtain: [benchmark.samples]
+
+  # Skip ingest — go directly to QA (assumes data already ingested)
+  - use: memsense_qa
+    by: [benchmark.samples.~0]
+    obtain: [benchmark.samples.~0.qa_results]
+
+  - use: response_filter
+    by: [benchmark.samples.~0.qa_results]
+    obtain: [benchmark.samples.~0.filtered_results]
+
+  - use: llm_judge
+    by: [benchmark.samples.~0.filtered_results]
+    obtain: [benchmark.samples.~0.grades]
+
+  - use: metrics_summary
+    by: [benchmark.samples]
+    obtain: [benchmark.summary]
+    reuse: true

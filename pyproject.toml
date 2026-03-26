@@ -1,0 +1,22 @@
+[project]
+name = "memsense-eval"
+version = "0.1.0"
+description = "Modular, YAML-driven evaluation framework for Memsense memory system"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "openai>=1.0.0",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.32.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+server = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+]
+
+[project.scripts]
+memsense-eval = "memsense_eval.cli:main"

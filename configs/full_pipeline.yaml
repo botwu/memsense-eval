@@ -1,0 +1,74 @@
+# Full evaluation pipeline: ingest → QA → filter → judge → summary
+#
+# Usage:
+#   cd memsense-eval
+#   .venv/bin/python -m memsense_eval configs/full_pipeline.yaml
+
+resources:
+  - name: locomo_reader
+    config:
+      filter_category: "5"
+
+  - name: memsense_ingest
+    config:
+      base_url: "http://127.0.0.1:8787"
+      max_chunk_size: 4000
+      generate_tags: false
+
+  - name: memsense_qa
+    config:
+      agent_id: "main"
+      concurrency: 1
+      retries: 4
+      timeout: 600
+
+  - name: response_filter
+
+  - name: llm_judge
+    config:
+      model: "deepseek-chat"
+      base_url: "https://api.deepseek.com"
+      api_key: "sk-bd624bd8e4be42a9bf1a873287c447cf"
+      concurrency: 5
+
+  - name: metrics_summary
+    config:
+      output_dir: "output"
+      task_name: "full_eval"
+
+data:
+  benchmark:
+    data_path: "./data/locomo10_small.json"
+    user_prefix: "eval"
+
+flows:
+  # Step 1: Read LoCoMo data → structured samples
+  - use: locomo_reader
+    by: [benchmark.data_path]
+    obtain: [benchmark.samples]
+
+  # Step 2: Ingest each sample's conversations into memsense
+  - use: memsense_ingest
+    by: [benchmark.samples.~0]
+    obtain: [benchmark.samples.~0.ingest_result]
+
+  # Step 3: Run QA for each ingested sample
+  - use: memsense_qa
+    by: [benchmark.samples.~0, benchmark.samples.~0.ingest_result]
+    obtain: [benchmark.samples.~0.qa_results]
+
+  # Step 4: Filter bad responses
+  - use: response_filter
+    by: [benchmark.samples.~0.qa_results]
+    obtain: [benchmark.samples.~0.filtered_results]
+
+  # Step 5: Judge filtered answers
+  - use: llm_judge
+    by: [benchmark.samples.~0.filtered_results]
+    obtain: [benchmark.samples.~0.grades]
+
+  # Step 6: Aggregate metrics (reuse = periodic re-check)
+  - use: metrics_summary
+    by: [benchmark.samples]
+    obtain: [benchmark.summary]
+    reuse: true

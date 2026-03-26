@@ -1,0 +1,53 @@
+# Judge-only pipeline (QA results already available as JSONL)
+#
+# This config loads pre-existing QA results from a JSONL file and runs
+# only the LLM judge + metrics aggregation.
+#
+# Usage:
+#   cd memsense-eval
+#   .venv/bin/python -m memsense_eval configs/judge_only.yaml \
+#       --set benchmark.qa_results_path=output/qa_results.jsonl
+
+resources:
+  - name: qa_results_reader
+    config: {}
+
+  - name: response_filter
+
+  - name: llm_judge
+    config:
+      model: "deepseek-chat"
+      base_url: "https://api.deepseek.com"
+      api_key: "sk-bd624bd8e4be42a9bf1a873287c447cf"
+      concurrency: 5
+
+  - name: metrics_summary
+    config:
+      output_dir: "output"
+      task_name: "judge_only"
+
+data:
+  benchmark:
+    qa_results_path: "output/qa.eval.jsonl"
+
+flows:
+  # Step 1: Load existing QA results from JSONL
+  - use: qa_results_reader
+    by: [benchmark.qa_results_path]
+    obtain: [benchmark.samples]
+
+  # Step 2: Filter bad responses per sample
+  - use: response_filter
+    by: [benchmark.samples.~0.qa_results]
+    obtain: [benchmark.samples.~0.filtered_results]
+
+  # Step 3: Judge
+  - use: llm_judge
+    by: [benchmark.samples.~0.filtered_results]
+    obtain: [benchmark.samples.~0.grades]
+
+  # Step 4: Summary
+  - use: metrics_summary
+    by: [benchmark.samples]
+    obtain: [benchmark.summary]
+    reuse: true

@@ -1,0 +1,32 @@
+{
+  "score": 0.871,
+  "correct": 27,
+  "total": 31,
+  "per_category": {
+    "1": {
+      "correct": 3,
+      "total": 4,
+      "accuracy": 0.75
+    },
+    "2": {
+      "correct": 4,
+      "total": 6,
+      "accuracy": 0.6667
+    },
+    "3": {
+      "correct": 2,
+      "total": 2,
+      "accuracy": 1.0
+    },
+    "4": {
+      "correct": 18,
+      "total": 19,
+      "accuracy": 0.9474
+    }
+  },
+  "total_usage": {
+    "input_tokens": 26918,
+    "output_tokens": 5124,
+    "total_tokens": 2500139
+  }
+}
