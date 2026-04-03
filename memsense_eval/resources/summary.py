@@ -38,14 +38,24 @@ class MetricsSummaryResource(BaseResource):
         total_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
         for _key, sample in sorted(samples.items()):
-            grades = sample.get("grades")
-            if not grades:
-                continue
-            if isinstance(grades, list):
-                all_grades.extend(grades)
-            qa_results = sample.get("qa_results")
-            if isinstance(qa_results, list):
-                for r in qa_results:
+            # Per-question grades from streaming pipeline (grade.N traces)
+            grade_dict = sample.get("grade")
+            if isinstance(grade_dict, dict):
+                all_grades.extend(grade_dict.values())
+            # Legacy: batch grades from old pipeline
+            elif isinstance(sample.get("grades"), list):
+                all_grades.extend(sample["grades"])
+
+            # Usage from per-question items
+            qa_items = sample.get("qa_item")
+            if isinstance(qa_items, dict):
+                for r in qa_items.values():
+                    usage = r.get("usage", {})
+                    for k in total_usage:
+                        total_usage[k] += usage.get(k, 0)
+            # Legacy fallback
+            elif isinstance(sample.get("qa_results"), list):
+                for r in sample["qa_results"]:
                     usage = r.get("usage", {})
                     for k in total_usage:
                         total_usage[k] += usage.get(k, 0)

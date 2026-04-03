@@ -4,7 +4,7 @@
 # only the LLM judge + metrics aggregation.
 #
 # Usage:
-#   cd memsense-eval
+#   cd  memsense-eval
 #   .venv/bin/python -m memsense_eval configs/judge_only.yaml \
 #       --set benchmark.qa_results_path=output/qa_results.jsonl
 
@@ -16,10 +16,20 @@ resources:
 
   - name: llm_judge
     config:
-      model: "deepseek-chat"
-      base_url: "https://api.deepseek.com"
-      api_key: "sk-bd624bd8e4be42a9bf1a873287c447cf"
+      # DeepSeek (previous)
+      # model: "deepseek-chat"
+      # base_url: "https://api.deepseek.com"
+      # api_key: "sk-bd624bd8e4be42a9bf1a873287c447cf"
+
+      # Volcengine Ark (Doubao)
+      model: "doubao-1-5-pro-32k-250115"
+      base_url: "https://ark.cn-beijing.volces.com/api/v3"
+      api_key: "b3a3e50e-0ae3-4590-b0bc-029667b8ffdd"
       concurrency: 5
+      cache_dir: ".cache/judge"
+      max_retries: 5
+      base_delay: 0.5
+      max_delay: 10.0
 
   - name: metrics_summary
     config:

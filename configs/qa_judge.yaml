@@ -11,19 +11,34 @@ resources:
 
   - name: memsense_qa
     config:
-      agent_id: "main"
-      concurrency: 1
-      retries: 2
+      mode: "http"  # "http" or "cli" - HTTP mode with gateway
+      base_url: "http://127.0.0.1:18789"
+      token: "3876434efb9df238219cd49bba25d0102a2e99cef20944c8"
+      max_retries: 3
+      base_delay: 2.0
       timeout: 300
+      output_dir: "output"
+      # CLI mode params (if mode: "cli"):
+      # agent_id: "main"
 
   - name: response_filter
 
   - name: llm_judge
     config:
-      model: "deepseek-chat"
-      base_url: "https://api.deepseek.com"
-      api_key: "sk-bd624bd8e4be42a9bf1a873287c447cf"
+      # DeepSeek (previous)
+      # model: "deepseek-chat"
+      # base_url: "https://api.deepseek.com"
+      # api_key: "sk-bd624bd8e4be42a9bf1a873287c447cf"
+
+      # Volcengine Ark (Doubao)
+      model: "doubao-1-5-pro-32k-250115"
+      base_url: "https://ark.cn-beijing.volces.com/api/v3"
+      api_key: "b3a3e50e-0ae3-4590-b0bc-029667b8ffdd"
       concurrency: 5
+      cache_dir: ".cache/judge"
+      max_retries: 5
+      base_delay: 0.5
+      max_delay: 10.0
 
   - name: metrics_summary
     config:

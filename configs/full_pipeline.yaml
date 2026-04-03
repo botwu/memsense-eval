@@ -13,23 +13,43 @@ resources:
     config:
       base_url: "http://127.0.0.1:8787"
       max_chunk_size: 4000
-      generate_tags: false
+      concurrency: 3
+      max_retries: 3
+      base_delay: 2.0
+      user_prefix: "memsense_test_eval"
+
+  - name: embedding_wait
+    config:
+      db_url: "postgresql://127.0.0.1:5432/memsense"
+      poll_interval: 30.0       # fallback only; real wakeup via LISTEN/NOTIFY
+      timeout: 300.0
 
   - name: memsense_qa
     config:
-      agent_id: "main"
-      concurrency: 1
-      retries: 4
-      timeout: 600
+      mode: "http"
+      base_url: "http://127.0.0.1:18789"
+      token: "3876434efb9df238219cd49bba25d0102a2e99cef20944c8"
+      max_retries: 3
+      base_delay: 2.0
+      timeout: 300
+      output_dir: "output"
+      user_prefix: "memsense_test_eval"
+      # CLI mode (fallback):
+      # mode: "cli"
+      # agent_id: "main"
 
   - name: response_filter
 
-  - name: llm_judge
+  - name: llm_judge_single
     config:
-      model: "deepseek-chat"
-      base_url: "https://api.deepseek.com"
-      api_key: "sk-bd624bd8e4be42a9bf1a873287c447cf"
+      model: "doubao-1-5-pro-32k-250115"
+      base_url: "https://ark.cn-beijing.volces.com/api/v3"
+      api_key: "b3a3e50e-0ae3-4590-b0bc-029667b8ffdd"
       concurrency: 5
+      cache_dir: ".cache/judge"
+      max_retries: 5
+      base_delay: 0.5
+      max_delay: 10.0
 
   - name: metrics_summary
     config:
@@ -38,8 +58,8 @@ resources:
 
 data:
   benchmark:
-    data_path: "./data/locomo10_small.json"
-    user_prefix: "eval"
+    data_path: "./data/locomo10_subset.json"
+    user_prefix: "memsense_test_eval"
 
 flows:
   # Step 1: Read LoCoMo data → structured samples
@@ -52,22 +72,24 @@ flows:
     by: [benchmark.samples.~0]
     obtain: [benchmark.samples.~0.ingest_result]
 
-  # Step 3: Run QA for each ingested sample
+  # Step 3: Wait for all embedding jobs to complete
+  - use: embedding_wait
+    by: [benchmark.samples.~0.ingest_result]
+    obtain: [benchmark.samples.~0.embeddings_ready]
+
+  # Step 4: Run QA for each ingested sample
+  #   QA writes per-question results to sample["qa_item"][qi] during execution,
+  #   enabling the judge to start as soon as each answer arrives.
   - use: memsense_qa
-    by: [benchmark.samples.~0, benchmark.samples.~0.ingest_result]
+    by: [benchmark.samples.~0, benchmark.samples.~0.embeddings_ready]
     obtain: [benchmark.samples.~0.qa_results]
 
-  # Step 4: Filter bad responses
-  - use: response_filter
-    by: [benchmark.samples.~0.qa_results]
-    obtain: [benchmark.samples.~0.filtered_results]
+  # Step 5: Judge each question as it becomes available (streaming)
+  - use: llm_judge_single
+    by: [benchmark.samples.~0.qa_item.~1]
+    obtain: [benchmark.samples.~0.grade.~1]
 
-  # Step 5: Judge filtered answers
-  - use: llm_judge
-    by: [benchmark.samples.~0.filtered_results]
-    obtain: [benchmark.samples.~0.grades]
-
-  # Step 6: Aggregate metrics (reuse = periodic re-check)
+  # Step 6: Aggregate metrics (reuse = periodic re-check with live progress)
   - use: metrics_summary
     by: [benchmark.samples]
     obtain: [benchmark.summary]

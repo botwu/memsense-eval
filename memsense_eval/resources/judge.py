@@ -1,12 +1,12 @@
 """LLM-as-judge grading of QA results.
 
-Extracted from the original ``judge_util.py`` (locomo_grader) and
-``judge.py`` (grade_answers_with_concurrency).
+Enhanced with exponential backoff retry strategy and diskcache for LLM response caching.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -14,6 +14,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI, RateLimitError
+import diskcache
 
 from memsense_eval.engine.resource import BaseResource, register_resource
 
@@ -64,17 +65,35 @@ Respond with JSON only: {{"is_correct": "CORRECT" or "WRONG", "reasoning": "your
 """
 
 
+def _cache_key(question: str, gold_answer: str, response: str) -> str:
+    """Generate a stable cache key for the grading request."""
+    content = f"{question}|||{gold_answer}|||{response}"
+    return hashlib.sha256(content.encode()).hexdigest()
+
+
 async def _locomo_grader(
     client: AsyncOpenAI,
     model: str,
     question: str,
     gold_answer: str,
     response: str,
+    cache: diskcache.Cache | None = None,
     max_retries: int = 5,
+    base_delay: float = 0.5,
+    max_delay: float = 10.0,
 ) -> bool:
+    # Check cache first
+    if cache is not None:
+        cache_key = _cache_key(question, gold_answer, response)
+        cached = cache.get(cache_key)
+        if cached is not None:
+            logger.debug("Cache hit for question: %s", question[:60])
+            return cached
+
     prompt = _ACCURACY_TEMPLATE.format(
         question=question, gold_answer=gold_answer, response=response
     )
+
     for attempt in range(max_retries):
         try:
             resp = await client.chat.completions.create(
@@ -93,25 +112,36 @@ async def _locomo_grader(
                 # LLM returned non-JSON — fall back to keyword detection
                 upper = content.upper()
                 if "CORRECT" in upper and "WRONG" not in upper:
-                    return True
-                if "WRONG" in upper and "CORRECT" not in upper:
-                    return False
-                logger.warning(
-                    "Judge returned unparseable response (attempt %d): %s",
-                    attempt + 1, content[:120],
-                )
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(0.2 * (attempt + 1))
-                    continue
-                return False
+                    is_correct = True
+                elif "WRONG" in upper and "CORRECT" not in upper:
+                    is_correct = False
+                else:
+                    logger.warning(
+                        "Judge returned unparseable response (attempt %d): %s",
+                        attempt + 1, content[:120],
+                    )
+                    if attempt < max_retries - 1:
+                        delay = min(base_delay * (2 ** attempt), max_delay)
+                        await asyncio.sleep(delay)
+                        continue
+                    is_correct = False
+            else:
+                label = result.get("is_correct", result.get("label", "WRONG"))
+                is_correct = label.strip().lower() == "correct"
 
-            label = result.get("is_correct", result.get("label", "WRONG"))
-            return label.strip().lower() == "correct"
+            # Cache the result
+            if cache is not None:
+                cache_key = _cache_key(question, gold_answer, response)
+                cache.set(cache_key, is_correct)
+
+            return is_correct
 
         except RateLimitError:
             if attempt >= max_retries - 1:
                 raise
-            await asyncio.sleep(0.5 * (attempt + 1))
+            delay = min(base_delay * (2 ** attempt), max_delay)
+            logger.warning("Rate limit hit (attempt %d/%d), retrying in %.1fs", attempt + 1, max_retries, delay)
+            await asyncio.sleep(delay)
         except Exception as exc:
             logger.warning(
                 "Judge API error (attempt %d/%d): %s",
@@ -120,14 +150,15 @@ async def _locomo_grader(
             if attempt >= max_retries - 1:
                 logger.error("Judge gave up after %d attempts: %s", max_retries, question[:60])
                 return False
-            await asyncio.sleep(0.5 * (attempt + 1))
+            delay = min(base_delay * (2 ** attempt), max_delay)
+            await asyncio.sleep(delay)
 
     return False
 
 
 @register_resource("llm_judge")
 class LLMJudgeResource(BaseResource):
-    """Grade a list of QA records using an LLM judge."""
+    """Grade a list of QA records using an LLM judge with caching."""
 
     def __init__(
         self,
@@ -135,6 +166,10 @@ class LLMJudgeResource(BaseResource):
         base_url: str | None = None,
         api_key: str | None = None,
         concurrency: int = 5,
+        cache_dir: str | None = None,
+        max_retries: int = 5,
+        base_delay: float = 0.5,
+        max_delay: float = 10.0,
         **_kwargs: Any,
     ) -> None:
         load_dotenv()
@@ -144,9 +179,20 @@ class LLMJudgeResource(BaseResource):
             api_key=api_key or os.getenv("OPENAI_API_KEY"),
         )
         self.concurrency = concurrency
+        self.max_retries = max_retries
+        self.base_delay = base_delay
+        self.max_delay = max_delay
+
+        # Initialize diskcache
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
+            self.cache = diskcache.Cache(cache_dir)
+            logger.info("Judge cache enabled at %s", cache_dir)
+        else:
+            self.cache = None
 
     async def process(self, qa_results: list[dict]) -> tuple:
-        """Grade every QA record.
+        """Grade every QA record with caching.
 
         Returns ``(graded_list,)`` where each entry gains a ``grade`` bool.
         """
@@ -160,6 +206,10 @@ class LLMJudgeResource(BaseResource):
                     item["question"],
                     item["expected"],
                     item["response"],
+                    self.cache,
+                    self.max_retries,
+                    self.base_delay,
+                    self.max_delay,
                 )
                 return {**item, "grade": is_correct}
 
@@ -172,3 +222,28 @@ class LLMJudgeResource(BaseResource):
             correct, len(graded), 100 * correct / len(graded) if graded else 0,
         )
         return (list(graded),)
+
+
+@register_resource("llm_judge_single")
+class LLMJudgeSingleResource(LLMJudgeResource):
+    """Grade a single QA record, dispatched per-question for streaming."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._sem = asyncio.Semaphore(self.concurrency)
+
+    async def process(self, qa_item: dict) -> tuple:  # type: ignore[override]
+        """Grade one QA record. Returns ``(graded_item,)``."""
+        async with self._sem:
+            is_correct = await _locomo_grader(
+                self.client,
+                self.model,
+                qa_item["question"],
+                qa_item["expected"],
+                qa_item["response"],
+                self.cache,
+                self.max_retries,
+                self.base_delay,
+                self.max_delay,
+            )
+            return ({**qa_item, "grade": is_correct},)

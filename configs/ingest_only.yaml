@@ -1,0 +1,32 @@
+# Ingest-only pipeline: load data → ingest into memsense
+#
+# Usage:
+#   cd memsense-eval
+#   uv run python -m memsense_eval configs/ingest_only.yaml
+
+resources:
+  - name: locomo_reader
+    config:
+      filter_category: "5"
+
+  - name: memsense_ingest
+    config:
+      base_url: "http://127.0.0.1:8787"
+      max_chunk_size: 4000
+      generate_tags: false
+      concurrency: 3
+      max_retries: 3
+      base_delay: 2.0
+
+data:
+  benchmark:
+    data_path: "./data/locomo10_small.json"
+
+flows:
+  - use: locomo_reader
+    by: [benchmark.data_path]
+    obtain: [benchmark.samples]
+
+  - use: memsense_ingest
+    by: [benchmark.samples.~0]
+    obtain: [benchmark.samples.~0.ingest_result]

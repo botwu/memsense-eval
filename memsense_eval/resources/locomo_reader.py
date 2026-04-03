@@ -35,6 +35,26 @@ def _format_message(msg: dict) -> str:
     return line
 
 
+def _extract_speaker_lines(text: str, speaker_name: str) -> str:
+    """Extract lines belonging to a specific speaker from conversation text."""
+    result = []
+    capturing = False
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith(f"{speaker_name}:"):
+            capturing = True
+            result.append(stripped)
+        elif ":" in stripped and not stripped.startswith("[") and not stripped.startswith("http"):
+            capturing = False
+        elif capturing:
+            result.append(stripped)
+        elif stripped.startswith("["):
+            result.append(stripped)
+    return "\n".join(result)
+
+
 def _build_session_messages(
     item: dict,
     session_range: tuple[int, int] | None = None,
@@ -42,7 +62,9 @@ def _build_session_messages(
     tail: str = "",
 ) -> list[dict]:
     conv = item["conversation"]
-    speakers = f"{conv['speaker_a']} & {conv['speaker_b']}"
+    speaker_a = conv["speaker_a"]
+    speaker_b = conv["speaker_b"]
+    speakers = f"{speaker_a} & {speaker_b}"
 
     session_keys = sorted(
         [k for k in conv if k.startswith("session_") and not k.endswith("_date_time")],
@@ -60,22 +82,44 @@ def _build_session_messages(
         dt_key = f"{sk}_date_time"
         date_time = conv.get(dt_key, "")
 
+        header = f"[group chat conversation: {date_time}]"
         parts: list[str] = []
+        parts_a: list[str] = []
+        parts_b: list[str] = []
         if head:
             parts.append(head)
-        parts.append(f"[group chat conversation: {date_time}]")
+            parts_a.append(head)
+            parts_b.append(head)
+        parts.append(header)
+        parts_a.append(header)
+        parts_b.append(header)
         for msg in conv[sk]:
-            parts.append(_format_message(msg))
+            formatted = _format_message(msg)
+            parts.append(formatted)
+            speaker = msg.get("speaker", "")
+            if speaker == speaker_a:
+                parts_a.append(formatted)
+            elif speaker == speaker_b:
+                parts_b.append(formatted)
+            else:
+                parts_a.append(formatted)
+                parts_b.append(formatted)
         if tail:
             parts.append(tail)
+            parts_a.append(tail)
+            parts_b.append(tail)
 
         sessions.append({
             "message": "\n\n".join(parts),
+            "speaker_a_text": "\n\n".join(parts_a),
+            "speaker_b_text": "\n\n".join(parts_b),
             "meta": {
                 "sample_id": item["sample_id"],
                 "session_key": sk,
                 "date_time": date_time,
                 "speakers": speakers,
+                "speaker_a": speaker_a,
+                "speaker_b": speaker_b,
             },
         })
 

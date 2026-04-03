@@ -8,6 +8,7 @@ global ``name_to_resource`` registry.
 from memsense_eval.resources import (  # noqa: F401
     locomo_reader,
     ingest,
+    embedding_wait,
     qa,
     judge,
     filter,
